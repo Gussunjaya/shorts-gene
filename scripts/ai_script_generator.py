@@ -2,8 +2,6 @@ import os
 import sys
 import json
 import argparse
-import urllib.request
-import urllib.error
 from typing import Dict, Any, Optional
 
 def get_system_prompt() -> str:
@@ -27,139 +25,98 @@ def get_system_prompt() -> str:
           "scene_id": 1,
           "narration_chunk": "potongan teks narasi untuk adegan ini",
           "visual_description": "deskripsi visual / motion graphic animasi yang ditampilkan",
-          "sfx_or_meme": "nama efek suara atau meme GIF (contoh: 'whoosh', 'vine_boom', 'confused_cat')"
+          "sfx_or_meme": "nama efek suara atau meme GIF"
         }
       ],
       "cta": "kalimat penutup / call to action"
     }
     """
 
-# ----------------------------------------------------
-# DIAGNOSTIC CHECK
-# ----------------------------------------------------
-def run_diagnostics(github_token: Optional[str], gemini_key: Optional[str], groq_key: Optional[str]):
-    print("=================== SYSTEM DIAGNOSTICS ===================")
-    print(f"GITHUB_TOKEN   : {'TERDETEKSI (Len: ' + str(len(github_token)) + ')' if github_token else 'KOSONG / TIDAK ADA'}")
-    print(f"GEMINI_API_KEY : {'TERDETEKSI (Len: ' + str(len(gemini_key)) + ')' if gemini_key else 'KOSONG / TIDAK ADA'}")
-    print(f"GROQ_API_KEY   : {'TERDETEKSI (Len: ' + str(len(groq_key)) + ')' if groq_key else 'KOSONG / TIDAK ADA'}")
-    print("==========================================================")
+def print_diagnostics():
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gh_token = os.getenv("GITHUB_TOKEN", "").strip()
+
+    print("\n=================== DIAGNOSTIK API KEYS ===================")
+    print(f"GEMINI_API_KEY : {'✅ TERISI (' + str(len(gemini_key)) + ' karakter)' if gemini_key else '❌ KOSONG / UNSET'}")
+    print(f"GROQ_API_KEY   : {'✅ TERISI (' + str(len(groq_key)) + ' karakter)' if groq_key else '❌ KOSONG / UNSET'}")
+    print(f"GITHUB_TOKEN   : {'✅ TERISI (' + str(len(gh_token)) + ' karakter)' if gh_token else '❌ KOSONG / UNSET'}")
+    print("===========================================================\n")
 
 # ----------------------------------------------------
-# 1. GOOGLE GEMINI API (Prioritas Utama - Paling Stabil)
+# 1. GEMINI API (SDK RESMI)
 # ----------------------------------------------------
 def call_gemini(prompt: str, api_key: str) -> Optional[str]:
-    print("[INFO] Memanggil Gemini API...")
-    models_to_try = [
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
-    ]
+    print("[RUN] Memanggil Gemini API (via google-generativeai)...")
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
 
-    for model_name in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "system_instruction": {
-                "parts": [{"text": get_system_prompt()}]
-            },
-            "contents": [{
-                "parts": [{"text": f"Buatkan skrip Shorts lengkap untuk topik: {prompt}"}]
-            }],
-            "generationConfig": {
-                "response_mime_type": "application/json"
-            }
-        }
+        # Daftar model stabil Gemini
+        models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp']
+        
+        for model_name in models_to_try:
+            try:
+                print(f" -> Mencoba model: {model_name}")
+                model = genai.GenerativeModel(
+                    model_name=model_name,
+                    system_instruction=get_system_prompt(),
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                response = model.generate_content(f"Buatkan skrip Shorts tentang: {prompt}")
+                if response.text:
+                    print(f"[SUCCESS] Gemini ({model_name}) Berhasil!")
+                    return response.text
+            except Exception as inner_e:
+                print(f" [!] Model {model_name} gagal: {inner_e}")
 
-        try:
-            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
-            with urllib.request.urlopen(req, timeout=20) as response:
-                res_body = json.loads(response.read().decode('utf-8'))
-                text_content = res_body['candidates'][0]['content']['parts'][0]['text']
-                print(f"[SUCCESS] Berhasil menggunakan Gemini Model: {model_name}")
-                return text_content
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            print(f"[WARNING] Gemini ({model_name}) HTTP Error {e.code}: {err_msg[:150]}...")
-        except Exception as e:
-            print(f"[WARNING] Gemini ({model_name}) Error: {e}")
-
+    except Exception as e:
+        print(f"[ERROR] Gemini SDK Error: {e}")
     return None
 
 # ----------------------------------------------------
-# 2. GROQ API (Fallback 1 - Respon Tercepat)
+# 2. GROQ API (SDK OPENAI)
 # ----------------------------------------------------
 def call_groq(prompt: str, api_key: str) -> Optional[str]:
-    print("[INFO] Memanggil Groq API...")
-    models_to_try = [
-        "llama-3.1-80b-instant",
-        "llama3-70b-8192",
-        "llama3-8b-8192",
-        "gemma2-9b-it"
-    ]
-
+    print("[RUN] Memanggil Groq API...")
     try:
         from openai import OpenAI
         client = OpenAI(
             base_url="https://api.groq.com/openai/v1",
-            api_key=api_key,
-            timeout=20.0
+            api_key=api_key
         )
+        
+        # Model Groq aktif 2026
+        models_to_try = [
+            "llama-3.1-80b-instant",
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768"
+        ]
+
         for model_name in models_to_try:
             try:
+                print(f" -> Mencoba model Groq: {model_name}")
                 response = client.chat.completions.create(
                     messages=[
                         {"role": "system", "content": get_system_prompt()},
-                        {"role": "user", "content": f"Buatkan skrip Shorts lengkap untuk topik: {prompt}"}
+                        {"role": "user", "content": f"Buatkan skrip Shorts tentang: {prompt}"}
                     ],
                     model=model_name,
                     temperature=0.7,
                     response_format={"type": "json_object"}
                 )
-                print(f"[SUCCESS] Berhasil menggunakan Groq Model: {model_name}")
+                print(f"[SUCCESS] Groq ({model_name}) Berhasil!")
                 return response.choices[0].message.content
-            except Exception as e:
-                print(f"[WARNING] Groq ({model_name}) Gagal: {e}")
-    except Exception as e:
-        print(f"[WARNING] Client Groq Error: {e}")
+            except Exception as inner_e:
+                print(f" [!] Model Groq {model_name} gagal: {inner_e}")
 
+    except Exception as e:
+        print(f"[ERROR] Groq Error: {e}")
     return None
 
 # ----------------------------------------------------
-# 3. GITHUB MODELS API (Fallback 2)
-# ----------------------------------------------------
-def call_github_models(prompt: str, token: str) -> Optional[str]:
-    print("[INFO] Memanggil GitHub Models API...")
-    models_to_try = ["gpt-4o-mini", "gpt-4o"]
-
-    try:
-        from openai import OpenAI
-        client = OpenAI(
-            base_url="https://models.inference.ai.azure.com",
-            api_key=token,
-            timeout=15.0
-        )
-        for model_name in models_to_try:
-            try:
-                response = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": get_system_prompt()},
-                        {"role": "user", "content": f"Buatkan skrip Shorts lengkap untuk topik: {prompt}"}
-                    ],
-                    model=model_name,
-                    temperature=0.7,
-                    response_format={"type": "json_object"}
-                )
-                print(f"[SUCCESS] Berhasil menggunakan GitHub Model: {model_name}")
-                return response.choices[0].message.content
-            except Exception as e:
-                print(f"[WARNING] GitHub Models ({model_name}) Gagal: {e}")
-    except Exception as e:
-        print(f"[WARNING] Client GitHub Models Error: {e}")
-
-    return None
-
-# ----------------------------------------------------
-# MAIN EXECUTION
+# MAIN ROUTER
 # ----------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
@@ -167,42 +124,38 @@ def main():
     parser.add_argument("--output", type=str, default="script_output.json")
     args = parser.parse_args()
 
-    github_token = os.getenv("GITHUB_TOKEN")
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    groq_key = os.getenv("GROQ_API_KEY")
+    print_diagnostics()
 
-    run_diagnostics(github_token, gemini_key, groq_key)
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
 
     raw_res = None
 
-    # Urutan Eksekusi: Gemini -> Groq -> GitHub Models
+    # Priority 1: Gemini
     if gemini_key:
         raw_res = call_gemini(args.topic, gemini_key)
 
+    # Priority 2: Groq (Jalan kalau Gemini gagal / key kosong)
     if not raw_res and groq_key:
         raw_res = call_groq(args.topic, groq_key)
 
-    if not raw_res and github_token:
-        raw_res = call_github_models(args.topic, github_token)
-
     if not raw_res:
-        print("[ERROR] Semua AI Provider gagal atau API Keys belum dikonfigurasi di GitHub Secrets!")
+        print("\n[CRITICAL ERROR] Semua Provider AI Gagal!")
+        print("PERIKSA: Apakah GEMINI_API_KEY atau GROQ_API_KEY sudah dimasukkan ke GitHub Settings > Secrets > Actions?")
         sys.exit(1)
 
-    # Clean JSON Format
+    # Cleaning & Saving
     cleaned = raw_res.strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1]
-        cleaned = cleaned.rsplit("```", 1)[0].strip()
+        cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
     try:
         data = json.loads(cleaned)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"[SUCCESS] Skrip berhasil dibuat dan tersimpan di {args.output}")
-    except json.JSONDecodeError as e:
-        print(f"[ERROR] Memparsing JSON Gagal: {e}")
-        print(f"Respon Mentah AI: {raw_res}")
+        print(f"\n[FINISH] Skrip berhasil dibuat & disimpan di '{args.output}'")
+    except Exception as e:
+        print(f"[ERROR] JSON Decode Error: {e}\nRaw Content:\n{raw_res}")
         sys.exit(1)
 
 if __name__ == "__main__":
