@@ -1,6 +1,6 @@
 name: Generate Dynamic Shorts Video
 
-on:
+'on':
   issues:
     types: [opened]
   workflow_dispatch:
