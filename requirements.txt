@@ -1,1 +1,4 @@
-
+openai
+google-generativeai
+edge-tts
+pydub
