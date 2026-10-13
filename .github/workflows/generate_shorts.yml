@@ -1,1 +1,78 @@
+name: Generate Dynamic Shorts Video
 
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Topik Video Shorts'
+        required: true
+        type: string
+
+jobs:
+  render-video:
+    if: startsWith(github.event.issue.title, '[GENERATE]:') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install System Dependencies (FFmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python & Node Packages
+        run: |
+          pip install -r requirements.txt
+          npm install
+
+      - name: Extract Topic
+        id: topic
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            TITLE="${{ github.event.issue.title }}"
+            TOPIC="${TITLE#\[GENERATE\]: }"
+          else
+            TOPIC="${{ github.event.inputs.topic }}"
+          fi
+          echo "TOPIC_STR=$TOPIC" >> $GITHUB_ENV
+
+      - name: Run AI Script Generator
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python scripts/ai_script_generator.py --topic "$TOPIC_STR"
+
+      - name: Generate Audio & Subtitles
+        run: |
+          python scripts/audio_engine.py script_output.json
+
+      - name: Copy Generated Audio to Remotion Public Folder
+        run: |
+          mkdir -p public
+          cp final_audio.mp3 public/final_audio.mp3
+
+      - name: Render Video with Remotion
+        run: |
+          npx remotion render src/Root.tsx ShortsComposition out/shorts_video.mp4
+
+      - name: Upload Finished MP4 Video
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-video-${{ github.run_id }}
+          path: out/shorts_video.mp4
